@@ -1,0 +1,15 @@
+{
+  "manifest_version": 2,
+  "name": "Kindle Highlights Importer",
+  "version": "1.0.0",
+  "description": "Import Kindle highlights from My Clippings.txt into Zotero as formatted notes.",
+  "author": "You",
+  "applications": {
+    "zotero": {
+      "id": "kindle-importer@zotero.plugin",
+      "update_url": "https://example.com/kindle-importer-updates.json",
+      "strict_min_version": "7.0",
+      "strict_max_version": "8.*"
+    }
+  }
+}

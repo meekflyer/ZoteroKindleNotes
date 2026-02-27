@@ -2,101 +2,89 @@
  * bootstrap.js
  *
  * Zotero 7 Bootstrap-style plugin entry point.
- * Registers a "Import Kindle Highlights…" item under Zotero's Tools menu.
  *
- * Lifecycle hooks called by Zotero:
- *   install()   — called once when plugin is first installed
- *   startup()   — called each time Zotero starts with the plugin enabled
- *   shutdown()  — called when Zotero closes or plugin is disabled
- *   uninstall() — called when plugin is removed
+ * Key Zotero 7 requirements:
+ *  - chrome.manifest is NOT supported; chrome URLs must be registered
+ *    via aomStartup.registerChrome() in startup()
+ *  - startup() receives { id, version, rootURI } where rootURI is a string
+ *  - Services, Cc, Ci, Cu are globals in the bootstrap context
  */
 
 "use strict";
 
-// Keep a reference to the menu item so we can remove it on shutdown
-var _menuItem = null;
+var chromeHandle = null;
+var _menuItem    = null;
 
-// ─── Lifecycle ────────────────────────────────────────────────────────────────
+function install(data, reason) {}
 
-function install(data, reason) {
-  // Nothing needed on first install
-}
+async function startup({ id, version, rootURI }, reason) {
+  // 1. Register chrome:// URL for our dialog
+  // chrome.manifest is no longer supported in Zotero 7 — must use aomStartup
+  const aomStartup = Cc["@mozilla.org/addons/addon-manager-startup;1"]
+    .getService(Ci.amIAddonManagerStartup);
 
-async function startup(data, reason) {
-  // Wait for Zotero UI to be ready before touching the menu
+  const manifestURI = Services.io.newURI(rootURI + "manifest.json");
+  chromeHandle = aomStartup.registerChrome(manifestURI, [
+    ["content", "kindle-importer", "chrome/content/"],
+  ]);
+
+  // 2. Wait for Zotero UI to be fully ready
   await Zotero.uiReadyPromise;
 
-  // Load our source modules into the plugin's scope
-  Services.scriptloader.loadSubScript(
-    data.resourceURI.spec + "src/parser.js",   this
-  );
-  Services.scriptloader.loadSubScript(
-    data.resourceURI.spec + "src/matcher.js",  this
-  );
-  Services.scriptloader.loadSubScript(
-    data.resourceURI.spec + "src/bookLookup.js", this
-  );
-  Services.scriptloader.loadSubScript(
-    data.resourceURI.spec + "src/importer.js", this
-  );
+  // 3. Load source modules into a shared sandbox object
+  // Using a plain object as the scope so vars defined in each file
+  // are accessible as properties after loading.
+  var scope = { Zotero };
+  Services.scriptloader.loadSubScript(rootURI + "src/parser.js",     scope);
+  Services.scriptloader.loadSubScript(rootURI + "src/matcher.js",    scope);
+  Services.scriptloader.loadSubScript(rootURI + "src/bookLookup.js", scope);
+  Services.scriptloader.loadSubScript(rootURI + "src/importer.js",   scope);
 
-  // Expose modules on a single global so dialog.js can reach them
+  // 4. Expose modules on Zotero global for dialog.js to access
   Zotero.KindleImporter = {
-    Parser:     KindleParser,
-    Matcher:    KindleMatcher,
-    BookLookup: KindleBookLookup,
-    Importer:   KindleImporter,
+    Parser:     scope.KindleParser,
+    Matcher:    scope.KindleMatcher,
+    BookLookup: scope.KindleBookLookup,
+    Importer:   scope.KindleImporter,
+    openDialog,
   };
 
-  // Add "Import Kindle Highlights…" to the Tools menu
+  // 5. Add Tools menu item
   _menuItem = addMenuItem();
 }
 
 function shutdown(data, reason) {
-  // Remove the menu item we added
   if (_menuItem && _menuItem.parentNode) {
     _menuItem.parentNode.removeChild(_menuItem);
     _menuItem = null;
   }
-
-  // Clean up our global
   if (Zotero.KindleImporter) {
     delete Zotero.KindleImporter;
   }
+  if (chromeHandle) {
+    chromeHandle.destruct();
+    chromeHandle = null;
+  }
 }
 
-function uninstall(data, reason) {
-  // Nothing extra needed beyond shutdown
-}
-
-// ─── Menu Registration ────────────────────────────────────────────────────────
+function uninstall(data, reason) {}
 
 function addMenuItem() {
-  // Get the main Zotero window
   const win = Services.wm.getMostRecentWindow("navigator:browser");
   if (!win) return null;
 
-  const doc      = win.document;
+  const doc       = win.document;
   const toolsMenu = doc.getElementById("menu_ToolsPopup");
   if (!toolsMenu) return null;
 
-  const menuItem = doc.createXULElement("menuitem");
-  menuItem.id    = "kindle-importer-menuitem";
-  menuItem.setAttribute("label", "Import Kindle Highlights…");
-  menuItem.setAttribute("oncommand", "Zotero.KindleImporter.openDialog()");
+  const item = doc.createXULElement("menuitem");
+  item.id    = "kindle-importer-menuitem";
+  item.setAttribute("label",     "Import Kindle Highlights\u2026");
+  item.setAttribute("oncommand", "Zotero.KindleImporter.openDialog()");
 
-  // Insert before the separator at the bottom of the Tools menu
   const sep = toolsMenu.querySelector("menuseparator:last-of-type");
-  toolsMenu.insertBefore(menuItem, sep || null);
-
-  return menuItem;
-}
-
-// ─── Dialog Opener ────────────────────────────────────────────────────────────
-
-// This gets attached to Zotero.KindleImporter so the menu oncommand can call it
-if (typeof Zotero !== "undefined" && Zotero.KindleImporter) {
-  Zotero.KindleImporter.openDialog = openDialog;
+  toolsMenu.insertBefore(item, sep || null);
+  return item;
 }
 
 function openDialog() {
@@ -104,6 +92,6 @@ function openDialog() {
   win.openDialog(
     "chrome://kindle-importer/content/dialog.xhtml",
     "kindle-importer-dialog",
-    "chrome,dialog,centerscreen,resizable=yes,width=700,height=580",
+    "chrome,dialog,centerscreen,resizable=yes,width=740,height=680"
   );
 }

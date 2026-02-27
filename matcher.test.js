@@ -11,6 +11,7 @@ const {
   summarizeMatchResult,
   _tokenize: tokenize,
   _diceCoefficient: diceCoefficient,
+  _titleSimilarity: titleSimilarity,
 } = require("./src/matcher.js");
 
 // ─── Mock Helpers ─────────────────────────────────────────────────────────────
@@ -121,10 +122,12 @@ test("Dice coefficient: high similarity for minor differences", () => {
 });
 
 test("Dice coefficient: handles subtitle variations", () => {
-  // Kindle often includes subtitles, Zotero might not
+  // Kindle often includes subtitles, Zotero might not.
+  // titleSimilarity uses containment score to handle this case,
+  // so we test titleSimilarity (not raw dice) which is what matching actually uses.
   const kindle = tokenize("The Pragmatic Programmer: 20th Anniversary Edition");
   const zotero = tokenize("The Pragmatic Programmer");
-  const score = diceCoefficient(kindle, zotero);
+  const score = titleSimilarity(kindle, zotero);
   assert(score > 0.6, `subtitle variation should still score >0.6, got ${score.toFixed(3)}`);
 });
 
