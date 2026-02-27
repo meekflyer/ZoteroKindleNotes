@@ -1,0 +1,358 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet href="chrome://global/skin/global.css" type="text/css"?>
+<!DOCTYPE dialog>
+
+<dialog xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+        xmlns:html="http://www.w3.org/1999/xhtml"
+        id="kindle-importer-dialog"
+        title="Import Kindle Highlights"
+        onload="KindleDialog.init()"
+        ondialogaccept="return false"
+        ondialogcancel="KindleDialog.onCancel()"
+        style="min-width: 700px; min-height: 540px;">
+
+  <!-- Inline styles -->
+  <html:style><![CDATA[
+
+    /* ── Layout ── */
+    .wizard-screen   { display: none; flex-direction: column; height: 100%; padding: 16px 20px; box-sizing: border-box; }
+    .wizard-screen.active { display: flex; }
+
+    /* ── Header bar ── */
+    .screen-header   { margin-bottom: 14px; border-bottom: 1px solid #ddd; padding-bottom: 10px; }
+    .screen-title    { font-size: 15px; font-weight: bold; margin: 0 0 3px 0; }
+    .screen-subtitle { font-size: 12px; color: #666; margin: 0; }
+
+    /* ── Step indicator ── */
+    .steps           { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; }
+    .step            { font-size: 11px; padding: 3px 10px; border-radius: 12px;
+                       background: #eee; color: #999; }
+    .step.active     { background: #2374AB; color: #fff; }
+    .step.done       { background: #4CAF50; color: #fff; }
+    .step-sep        { font-size: 10px; color: #ccc; }
+
+    /* ── File picker ── */
+    .file-row        { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+    .file-path       { flex: 1; font-size: 12px; padding: 5px 8px;
+                       border: 1px solid #ccc; border-radius: 4px;
+                       background: #f9f9f9; color: #333; overflow: hidden;
+                       text-overflow: ellipsis; white-space: nowrap; }
+    .file-path.placeholder { color: #aaa; }
+
+    /* ── Summary cards ── */
+    .summary-grid    { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+    .summary-card    { text-align: center; padding: 10px 6px; border-radius: 6px; background: #f5f5f5; }
+    .summary-card .num { font-size: 22px; font-weight: bold; }
+    .summary-card .lbl { font-size: 11px; color: #666; margin-top: 2px; }
+    .card-green      { background: #e8f5e9; }
+    .card-green .num { color: #2e7d32; }
+    .card-yellow     { background: #fff8e1; }
+    .card-yellow .num { color: #f57f17; }
+    .card-blue       { background: #e3f2fd; }
+    .card-blue .num  { color: #1565c0; }
+    .card-grey       { background: #f5f5f5; }
+    .card-grey .num  { color: #555; }
+
+    /* ── Book lists / tables ── */
+    .section-label   { font-size: 12px; font-weight: bold; margin: 10px 0 5px 0; color: #444; }
+    .book-list       { flex: 1; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px; }
+    .book-row        { display: flex; align-items: center; padding: 7px 10px;
+                       border-bottom: 1px solid #eee; font-size: 12px; }
+    .book-row:last-child { border-bottom: none; }
+    .book-row:hover  { background: #f7f7f7; }
+    .book-title      { flex: 1; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .book-author     { width: 160px; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0 10px; }
+    .book-count      { width: 70px; text-align: right; color: #888; font-size: 11px; }
+    .book-badge      { font-size: 10px; padding: 2px 7px; border-radius: 10px; margin-left: 8px; white-space: nowrap; }
+    .badge-green     { background: #e8f5e9; color: #2e7d32; }
+    .badge-yellow    { background: #fff8e1; color: #e65100; }
+    .badge-blue      { background: #e3f2fd; color: #1565c0; }
+
+    /* ── Ambiguous review ── */
+    .ambig-card      { border: 1px solid #ffe082; border-radius: 6px; margin-bottom: 10px;
+                       background: #fffde7; padding: 10px 12px; }
+    .ambig-kindle    { font-weight: bold; font-size: 13px; margin-bottom: 6px; }
+    .ambig-kindle span { color: #888; font-weight: normal; font-size: 11px; margin-left: 6px; }
+    .ambig-options   { display: flex; flex-direction: column; gap: 4px; }
+    .ambig-option    { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 6px;
+                       border-radius: 4px; cursor: pointer; }
+    .ambig-option:hover { background: #fff9c4; }
+    .ambig-option input { margin: 0; }
+    .ambig-option-title { flex: 1; }
+    .ambig-option-score { color: #888; font-size: 11px; width: 55px; text-align: right; }
+    .ambig-add-new   { font-size: 11px; color: #1565c0; cursor: pointer;
+                       margin-top: 4px; display: inline-block; }
+    .ambig-add-new:hover { text-decoration: underline; }
+
+    /* ── Progress ── */
+    .progress-wrap   { margin: 20px 0; }
+    .progress-bar-bg { height: 10px; background: #e0e0e0; border-radius: 5px; overflow: hidden; }
+    .progress-bar-fg { height: 100%; background: #2374AB; border-radius: 5px;
+                       transition: width 0.3s ease; width: 0%; }
+    .progress-label  { font-size: 12px; color: #555; margin-top: 6px; }
+    .progress-log    { flex: 1; overflow-y: auto; border: 1px solid #eee; border-radius: 4px;
+                       padding: 8px; font-size: 11px; font-family: monospace;
+                       background: #fafafa; color: #444; }
+
+    /* ── Done screen ── */
+    .done-icon       { font-size: 48px; text-align: center; margin: 10px 0; }
+    .done-report     { background: #f5f5f5; border-radius: 6px; padding: 14px 16px;
+                       font-size: 13px; line-height: 1.8; }
+    .done-report .num { font-weight: bold; font-size: 15px; }
+
+    /* ── Buttons ── */
+    .button-row      { display: flex; justify-content: flex-end; gap: 8px;
+                       margin-top: 14px; padding-top: 10px; border-top: 1px solid #eee; }
+    button           { padding: 6px 18px; font-size: 12px; border-radius: 4px;
+                       border: 1px solid #ccc; background: #f5f5f5; cursor: pointer; }
+    button:hover     { background: #eaeaea; }
+    button.primary   { background: #2374AB; color: #fff; border-color: #1a5a87; }
+    button.primary:hover { background: #1a5a87; }
+    button:disabled  { opacity: 0.45; cursor: default; }
+
+    /* ── Misc ── */
+    .error-msg       { color: #c62828; font-size: 12px; margin-top: 6px; }
+    .hint            { font-size: 11px; color: #888; margin-top: 4px; }
+
+  ]]></html:style>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       SCREEN 1 — File Selection
+  ══════════════════════════════════════════════════════════════════ -->
+  <html:div id="screen-file" class="wizard-screen active">
+
+    <html:div class="screen-header">
+      <html:p class="screen-title">Import Kindle Highlights into Zotero</html:p>
+      <html:p class="screen-subtitle">Select your Kindle clippings file to get started.</html:p>
+    </html:div>
+
+    <html:div class="steps">
+      <html:span class="step active">1. Load File</html:span>
+      <html:span class="step-sep">›</html:span>
+      <html:span class="step">2. Preview</html:span>
+      <html:span class="step-sep">›</html:span>
+      <html:span class="step">3. Review</html:span>
+      <html:span class="step-sep">›</html:span>
+      <html:span class="step">4. Import</html:span>
+      <html:span class="step-sep">›</html:span>
+      <html:span class="step">5. Done</html:span>
+    </html:div>
+
+    <html:p style="font-size: 13px; margin-bottom: 12px;">
+      Connect your Kindle via USB and locate <strong>My Clippings.txt</strong>
+      at the root of the Kindle drive. Or browse to a copy you've saved locally.
+    </html:p>
+
+    <html:div class="file-row">
+      <html:div id="file-path-display" class="file-path placeholder">
+        No file selected…
+      </html:div>
+      <button id="btn-browse" onclick="KindleDialog.browseForFile()">Browse…</button>
+    </html:div>
+
+    <html:div id="file-error" class="error-msg" style="display:none"></html:div>
+
+    <!-- Parse summary appears after file is loaded -->
+    <html:div id="parse-summary" style="display:none">
+      <html:div class="summary-grid">
+        <html:div class="summary-card card-grey">
+          <html:div class="num" id="stat-books">—</html:div>
+          <html:div class="lbl">Books</html:div>
+        </html:div>
+        <html:div class="summary-card card-grey">
+          <html:div class="num" id="stat-highlights">—</html:div>
+          <html:div class="lbl">Highlights</html:div>
+        </html:div>
+        <html:div class="summary-card card-grey">
+          <html:div class="num" id="stat-notes">—</html:div>
+          <html:div class="lbl">Notes</html:div>
+        </html:div>
+        <html:div class="summary-card card-grey">
+          <html:div class="num" id="stat-skipped">—</html:div>
+          <html:div class="lbl">Skipped</html:div>
+        </html:div>
+      </html:div>
+      <html:p class="hint" id="parse-errors-hint" style="display:none"></html:p>
+    </html:div>
+
+    <html:div style="flex:1"></html:div>
+
+    <html:div class="button-row">
+      <button onclick="KindleDialog.onCancel()">Cancel</button>
+      <button id="btn-next-1" class="primary" disabled="true"
+              onclick="KindleDialog.goToPreview()">
+        Match Against Library →
+      </button>
+    </html:div>
+  </html:div>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       SCREEN 2 — Preview / Match Results
+  ══════════════════════════════════════════════════════════════════ -->
+  <html:div id="screen-preview" class="wizard-screen">
+
+    <html:div class="screen-header">
+      <html:p class="screen-title">Match Preview</html:p>
+      <html:p class="screen-subtitle">Review how your Kindle books matched against your Zotero library.</html:p>
+    </html:div>
+
+    <html:div class="steps">
+      <html:span class="step done">1. Load File</html:span>
+      <html:span class="step-sep">›</html:span>
+      <html:span class="step active">2. Preview</html:span>
+      <html:span class="step-sep">›</html:span>
+      <html:span class="step">3. Review</html:span>
+      <html:span class="step-sep">›</html:span>
+      <html:span class="step">4. Import</html:span>
+      <html:span class="step-sep">›</html:span>
+      <html:span class="step">5. Done</html:span>
+    </html:div>
+
+    <html:div class="summary-grid">
+      <html:div class="summary-card card-green">
+        <html:div class="num" id="match-count">—</html:div>
+        <html:div class="lbl">Matched</html:div>
+      </html:div>
+      <html:div class="summary-card card-yellow">
+        <html:div class="num" id="ambig-count">—</html:div>
+        <html:div class="lbl">Need Review</html:div>
+      </html:div>
+      <html:div class="summary-card card-blue">
+        <html:div class="num" id="new-count">—</html:div>
+        <html:div class="lbl">New Books</html:div>
+      </html:div>
+      <html:div class="summary-card card-grey">
+        <html:div class="num" id="total-count">—</html:div>
+        <html:div class="lbl">Total</html:div>
+      </html:div>
+    </html:div>
+
+    <html:div class="book-list" id="preview-list" style="flex:1"></html:div>
+
+    <html:div class="button-row">
+      <button onclick="KindleDialog.goToScreen('screen-file')">← Back</button>
+      <button onclick="KindleDialog.onCancel()">Cancel</button>
+      <button id="btn-next-2" class="primary"
+              onclick="KindleDialog.goToReview()">
+        Continue →
+      </button>
+    </html:div>
+  </html:div>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       SCREEN 3 — Ambiguous Review
+  ══════════════════════════════════════════════════════════════════ -->
+  <html:div id="screen-review" class="wizard-screen">
+
+    <html:div class="screen-header">
+      <html:p class="screen-title">Review Uncertain Matches</html:p>
+      <html:p class="screen-subtitle" id="review-subtitle">
+        For each Kindle book below, choose the best matching Zotero entry — or add as a new book.
+      </html:p>
+    </html:div>
+
+    <html:div class="steps">
+      <html:span class="step done">1. Load File</html:span>
+      <html:span class="step-sep">›</html:span>
+      <html:span class="step done">2. Preview</html:span>
+      <html:span class="step-sep">›</html:span>
+      <html:span class="step active">3. Review</html:span>
+      <html:span class="step-sep">›</html:span>
+      <html:span class="step">4. Import</html:span>
+      <html:span class="step-sep">›</html:span>
+      <html:span class="step">5. Done</html:span>
+    </html:div>
+
+    <html:div id="ambig-list" style="flex:1; overflow-y:auto;"></html:div>
+
+    <html:div class="button-row">
+      <button onclick="KindleDialog.goToScreen('screen-preview')">← Back</button>
+      <button onclick="KindleDialog.onCancel()">Cancel</button>
+      <button id="btn-next-3" class="primary"
+              onclick="KindleDialog.startImport()">
+        Start Import →
+      </button>
+    </html:div>
+  </html:div>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       SCREEN 4 — Import Progress
+  ══════════════════════════════════════════════════════════════════ -->
+  <html:div id="screen-progress" class="wizard-screen">
+
+    <html:div class="screen-header">
+      <html:p class="screen-title">Importing…</html:p>
+      <html:p class="screen-subtitle" id="progress-subtitle">
+        Looking up book metadata and writing notes to Zotero.
+      </html:p>
+    </html:div>
+
+    <html:div class="steps">
+      <html:span class="step done">1. Load File</html:span>
+      <html:span class="step-sep">›</html:span>
+      <html:span class="step done">2. Preview</html:span>
+      <html:span class="step-sep">›</html:span>
+      <html:span class="step done">3. Review</html:span>
+      <html:span class="step-sep">›</html:span>
+      <html:span class="step active">4. Import</html:span>
+      <html:span class="step-sep">›</html:span>
+      <html:span class="step">5. Done</html:span>
+    </html:div>
+
+    <html:div class="progress-wrap">
+      <html:div class="progress-bar-bg">
+        <html:div class="progress-bar-fg" id="progress-bar"></html:div>
+      </html:div>
+      <html:div class="progress-label" id="progress-label">Starting…</html:div>
+    </html:div>
+
+    <html:p class="section-label">Activity log</html:p>
+    <html:div class="progress-log" id="progress-log"></html:div>
+
+    <html:div class="button-row">
+      <button id="btn-cancel-import" onclick="KindleDialog.onCancel()">Cancel</button>
+    </html:div>
+  </html:div>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       SCREEN 5 — Done
+  ══════════════════════════════════════════════════════════════════ -->
+  <html:div id="screen-done" class="wizard-screen">
+
+    <html:div class="screen-header">
+      <html:p class="screen-title">Import Complete</html:p>
+      <html:p class="screen-subtitle">Your Kindle highlights have been added to Zotero.</html:p>
+    </html:div>
+
+    <html:div class="steps">
+      <html:span class="step done">1. Load File</html:span>
+      <html:span class="step-sep">›</html:span>
+      <html:span class="step done">2. Preview</html:span>
+      <html:span class="step-sep">›</html:span>
+      <html:span class="step done">3. Review</html:span>
+      <html:span class="step-sep">›</html:span>
+      <html:span class="step done">4. Import</html:span>
+      <html:span class="step-sep">›</html:span>
+      <html:span class="step active">5. Done</html:span>
+    </html:div>
+
+    <html:div class="done-icon">✅</html:div>
+
+    <html:div class="done-report" id="done-report"></html:div>
+
+    <html:div id="done-failures" style="display:none; margin-top:12px;">
+      <html:p class="section-label" style="color:#c62828;">⚠️ Some books had issues</html:p>
+      <html:div class="book-list" id="done-failures-list" style="max-height:120px;"></html:div>
+    </html:div>
+
+    <html:div style="flex:1"></html:div>
+
+    <html:div class="button-row">
+      <button class="primary" onclick="KindleDialog.close()">Close</button>
+    </html:div>
+  </html:div>
+
+  <!-- Dialog JS loaded last so DOM is ready -->
+  <script src="chrome://kindle-importer/content/dialog.js"/>
+
+</dialog>

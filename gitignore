@@ -1,0 +1,9 @@
+# Personal data — never commit your actual clippings
+My Clippings.txt
+My_Library.csv
+
+# macOS
+.DS_Store
+
+# Built artifact — optionally exclude if you publish via Releases
+# kindle-importer.xpi
