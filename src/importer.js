@@ -162,8 +162,9 @@ function summarizeImportReport(report) {
  * Build the HTML content for a Kindle highlights note.
  *
  * Format:
- *   <h1>Book Title</h1>
- *   <p><em>Imported from Kindle — N highlights, M notes</em></p>
+ *   <h1>Kindle Notes</h1>
+ *   <p><strong>Book Title</strong></p>
+ *   <p><em>Imported on DATE — N highlights, M notes</em></p>
  *   --- for each highlight ---
  *   <blockquote>Highlight text</blockquote>
  *   <p class="location">📍 Page 23 · Location 342–344 · Jan 5, 2025</p>
@@ -179,8 +180,9 @@ function buildNoteHTML(parsedBook) {
   });
 
   const lines = [
-    `<h1>${escapeHTML(title)}</h1>`,
-    `<p><em>Kindle highlights imported on ${importDate} — ` +
+    `<h1>Kindle Notes</h1>`,
+    `<p><strong>${escapeHTML(title)}</strong></p>`,
+    `<p><em>Imported on ${importDate} — ` +
       `${highlights.length} highlight${highlights.length !== 1 ? "s" : ""}, ` +
       `${notes.length} note${notes.length !== 1 ? "s" : ""}</em></p>`,
     `<hr/>`,

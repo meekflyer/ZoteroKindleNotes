@@ -127,10 +127,11 @@ function metadata(overrides = {}) {
 
 async function runTests() {
 
-await test("buildNoteHTML: contains book title as h1", async () => {
+await test("buildNoteHTML: h1 is 'Kindle Notes' and title follows as strong", async () => {
   const book = parsedBook("Thinking, Fast and Slow");
   const html = buildNoteHTML(book);
-  assert(html.includes("<h1>Thinking, Fast and Slow</h1>"), "h1 title present");
+  assert(html.includes("<h1>Kindle Notes</h1>"), "h1 is 'Kindle Notes'");
+  assert(html.includes("<strong>Thinking, Fast and Slow</strong>"), "title present as strong");
 });
 
 await test("buildNoteHTML: highlights rendered as blockquotes", async () => {
@@ -172,7 +173,7 @@ await test("buildNoteHTML: import metadata line present", async () => {
   const html = buildNoteHTML(book);
   assert(html.includes("3 highlights"), "highlight count in metadata");
   assert(html.includes("1 note"), "note count in metadata");
-  assert(html.includes("Kindle highlights imported"), "import label present");
+  assert(html.includes("Imported on"), "import label present");
 });
 
 // ─── Tests: attachNoteToExisting ─────────────────────────────────────────────
