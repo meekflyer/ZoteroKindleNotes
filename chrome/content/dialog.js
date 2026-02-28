@@ -147,23 +147,23 @@ var KindleDialog = {
         item.isRegularItem() && !item.isAttachment() && !item.isNote()
       );
 
-      // Debug: show count in subtitle so we know items were found
-      document.getElementById("screen-preview")
-        .querySelector(".screen-subtitle")
-        .textContent = `Matching ${this._parsedBooks.size} Kindle books against ${bookItems.length} Zotero books…`;
+      // ── Step 1: Re-confirm books already linked on a previous import ────────
+      // Searches for existing kindle-import notes, reads the stored kindleKey,
+      // and pre-confirms any matching parsed books — bypassing fuzzy matching
+      // for books the user has already reviewed and linked.
+      const { preMatched, remaining } = await this._findPreviousMatches(this._parsedBooks);
 
+      // ── Step 2: Fuzzy-match only the books not already linked ───────────────
       const liveLibrary = { getItems: () => bookItems };
-
-      // Diagnostic: show sample Zotero titles to confirm getField works
-      const sample = bookItems.slice(0, 3).map(i => {
-        try { return i.getField("title"); } catch(e) { return "(err:" + e.message + ")"; }
-      }).join(" | ");
-      document.getElementById("screen-preview")
-        .querySelector(".screen-subtitle")
-        .textContent = `Found ${bookItems.length} Zotero books. e.g. ${sample}`;
-
       const { Matcher } = Zotero.KindleImporter;
-      this._matchResult = Matcher.matchBooksToZotero(this._parsedBooks, liveLibrary);
+      const fuzzyResult = Matcher.matchBooksToZotero(remaining, liveLibrary);
+
+      // Merge pre-confirmed matches with fuzzy results
+      this._matchResult = {
+        matched:   [...preMatched, ...fuzzyResult.matched],
+        ambiguous: fuzzyResult.ambiguous,
+        unmatched: fuzzyResult.unmatched,
+      };
 
       const { matched, ambiguous, unmatched } = this._matchResult;
       const total = matched.length + ambiguous.length + unmatched.length;
@@ -193,6 +193,70 @@ var KindleDialog = {
         .querySelector(".screen-subtitle")
         .textContent = `Error: ${err.message} — ${err.stack || "no stack"}`;
     }
+  },
+
+  /**
+   * Scan the Zotero library for existing kindle-import notes. For each note
+   * that carries a stored kindleKey (added since fingerprint support), check
+   * whether the parsedBooks map contains a matching book — if so, pull it out
+   * as a pre-confirmed match, skipping fuzzy matching entirely.
+   *
+   * Returns:
+   *   preMatched — array of { parsedBook, zoteroItem, titleScore, authorScore }
+   *   remaining  — Map of books that still need fuzzy matching
+   */
+  async _findPreviousMatches(parsedBooks) {
+    const preMatched = [];
+    const remaining  = new Map(parsedBooks); // will delete from this as we confirm
+
+    try {
+      const libraryID = Zotero.Libraries.userLibraryID;
+      const { Importer } = Zotero.KindleImporter;
+
+      // Find Kindle notes by their embedded fingerprint comment (current format),
+      // with a fallback condition for legacy tagged notes.
+      const ns = new Zotero.Search();
+      ns.libraryID = libraryID;
+      ns.addCondition("joinMode", "any", "");
+      ns.addCondition("note", "contains", "kindle-import-meta");   // current format
+      ns.addCondition("tag",  "is",       "kindle-import");         // legacy format
+      const kindleNoteIDs = await ns.search();
+
+      if (kindleNoteIDs.length === 0) return { preMatched, remaining };
+
+      const kindleNotes = await Zotero.Items.getAsync(kindleNoteIDs);
+
+      // Build a map: kindleKey → parent Zotero item
+      const keyToItem = new Map();
+      for (const note of kindleNotes) {
+        const parentID = note.parentItemID;
+        if (!parentID) continue;
+
+        const fp = Importer._parseNoteFingerprint(note.getNote());
+        if (!fp || !fp.kindleKey) continue;
+
+        const parentItem = Zotero.Items.get(parentID);
+        if (parentItem) keyToItem.set(fp.kindleKey, parentItem);
+      }
+
+      // Pre-confirm any parsed book whose key appears in the map
+      for (const [bookKey, parsedBook] of parsedBooks) {
+        if (!keyToItem.has(bookKey)) continue;
+
+        preMatched.push({
+          parsedBook,
+          zoteroItem:  keyToItem.get(bookKey),
+          titleScore:  1.0, // previously confirmed by user or auto-matched
+          authorScore: 1.0,
+        });
+        remaining.delete(bookKey);
+      }
+    } catch (err) {
+      // Non-fatal: if anything goes wrong, fall back to full fuzzy matching
+      Zotero.debug(`KindleImporter: _findPreviousMatches failed — ${err.message}`);
+    }
+
+    return { preMatched, remaining };
   },
 
   _renderPreviewList(matched, ambiguous, unmatched) {
@@ -491,8 +555,9 @@ var KindleDialog = {
     const reportEl = document.getElementById("done-report");
     reportEl.innerHTML = `
       <p>📝 <span class="num">${report.notesAdded}</span> highlight note${report.notesAdded !== 1 ? "s" : ""} added to Zotero</p>
+      <p>🔄 <span class="num">${report.notesUpdated}</span> note${report.notesUpdated !== 1 ? "s" : ""} updated with new highlights</p>
       <p>📗 <span class="num">${report.booksCreated}</span> new book${report.booksCreated !== 1 ? "s" : ""} created in <em>Kindle Imports</em></p>
-      <p>⏭  <span class="num">${report.skipped}</span> book${report.skipped !== 1 ? "s" : ""} skipped — already had Kindle notes</p>
+      <p>⏭  <span class="num">${report.skipped}</span> book${report.skipped !== 1 ? "s" : ""} already up to date</p>
     `;
 
     if (report.failed.length > 0) {

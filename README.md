@@ -15,7 +15,7 @@ A Zotero 7 plugin that imports your Kindle highlights and notes from `My Clippin
 - Lets you manually resolve uncertain matches or mark books as new
 - "Mark all as new books" bulk action for quick processing
 - Adds highlights and notes as child note items in Zotero
-- Looks up new books via Open Library API to create proper Zotero entries
+- Looks up new books via Google Books and Open Library APIs to create proper Zotero entries
 
 ---
 
@@ -63,7 +63,7 @@ A Zotero 7 plugin that imports your Kindle highlights and notes from `My Clippin
 Short titles (3 words or fewer) require a stricter threshold since they're more likely to false-match.
 
 ### Book Lookup
-`src/bookLookup.js` uses the [Open Library API](https://openlibrary.org/developers/api) to fetch metadata for books not in your Zotero library, so they can be created as proper Zotero items with ISBN, publisher, etc.
+`src/bookLookup.js` fetches metadata for books not in your Zotero library so they can be created as proper Zotero items with ISBN, publisher, etc. It tries three sources in order: [Google Books API](https://developers.google.com/books) (title + author), Google Books (title only), then [Open Library API](https://openlibrary.org/developers/api) as a fallback. If all three fail, it creates a minimal record from whatever Kindle data is available.
 
 ### Importing
 `src/importer.js` creates Zotero note items as children of each matched book, formatted with the highlight text, location, and date.
@@ -85,7 +85,7 @@ kindle-zotero-plugin/
 ├── src/
 │   ├── parser.js          # My Clippings.txt parser
 │   ├── matcher.js         # Fuzzy book matching against Zotero library
-│   ├── bookLookup.js      # Open Library API integration
+│   ├── bookLookup.js      # Google Books + Open Library API integration
 │   └── importer.js        # Zotero note creation
 ├── *.test.js              # Node.js test files (run with: node matcher.test.js)
 └── kindle-importer.xpi    # Built plugin (zip of the above)
@@ -122,9 +122,8 @@ Notable challenges solved along the way:
 
 ## Known Limitations
 
-- Duplicate detection is not yet implemented — running the import twice will create duplicate notes
 - Very short book titles (1–2 words) may still occasionally false-match; use the Review screen to correct these
-- The Open Library API lookup for new books occasionally returns incomplete metadata
+- Book metadata fetched from external APIs occasionally returns incomplete data (missing ISBN, publisher, etc.) — the import will still succeed with whatever fields are available
 
 ---
 

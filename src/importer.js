@@ -5,6 +5,7 @@
  *
  * Three operations:
  *   1. attachNoteToExisting  — adds a highlights note to an already-matched Zotero item
+ *                              and ensures the item appears in "Kindle Imports"
  *   2. createBookAndNote     — creates a new Zotero book item from lookup metadata,
  *                              places it in the "Kindle Imports" collection,
  *                              then attaches a highlights note
@@ -23,10 +24,15 @@
 
 "use strict";
 
-// Tag added to every note we create — used for duplicate detection
-const KINDLE_NOTE_TAG = "kindle-import";
+// Legacy tag that older notes may carry — used only for backward-compat detection.
+// New notes are NOT tagged; they are identified by the fingerprint comment instead.
+const LEGACY_KINDLE_TAG = "kindle-import";
 
-// Name of the collection new books are placed in
+// HTML comment embedded in every generated note for fingerprint comparison.
+// Used to detect and re-identify Kindle notes without polluting the user's tags.
+const FINGERPRINT_COMMENT_RE = /<!--\s*kindle-import-meta:\s*(\{[^}]+\})\s*-->/;
+
+// Name of the collection all imported books are placed in
 const IMPORT_COLLECTION_NAME = "Kindle Imports";
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -45,14 +51,15 @@ const IMPORT_COLLECTION_NAME = "Kindle Imports";
  * ImportReport shape:
  * {
  *   notesAdded:    number,
+ *   notesUpdated:  number,   // note replaced because new highlights were found
  *   booksCreated:  number,
- *   skipped:       number,   // already had a Kindle note
+ *   skipped:       number,   // no new highlights since last import
  *   failed:        Array<{title, reason}>
  * }
  */
 async function importAll(importInput, zoteroAPI, onProgress) {
   const api    = zoteroAPI || buildZoteroAPI();
-  const report = { notesAdded: 0, booksCreated: 0, skipped: 0, failed: [] };
+  const report = { notesAdded: 0, notesUpdated: 0, booksCreated: 0, skipped: 0, failed: [] };
 
   const { matched = [], confirmed = [], lookupResults = [] } = importInput;
 
@@ -65,9 +72,10 @@ async function importAll(importInput, zoteroAPI, onProgress) {
   // ── 1. Attach notes to already-matched Zotero items ────────────────────────
   for (const { parsedBook, zoteroItem } of [...matched, ...confirmed]) {
     try {
-      const skipped = await attachNoteToExisting(parsedBook, zoteroItem, api);
-      if (skipped) report.skipped++;
-      else         report.notesAdded++;
+      const result = await attachNoteToExisting(parsedBook, zoteroItem, api, importCollectionID);
+      if (result === "skipped")       report.skipped++;
+      else if (result === "updated")  report.notesUpdated++;
+      else                            report.notesAdded++;
     } catch (err) {
       report.failed.push({ title: parsedBook.title, reason: err.message });
     }
@@ -92,25 +100,52 @@ async function importAll(importInput, zoteroAPI, onProgress) {
 }
 
 /**
- * Attach a Kindle highlights note to an existing Zotero item.
- * Returns true if skipped (note already exists), false if note was created.
+ * Attach a Kindle highlights note to an existing Zotero item, and ensure
+ * the item is in the "Kindle Imports" collection.
  *
- * @param {Book}   parsedBook
- * @param {object} zoteroItem  - Real Zotero item or mock
- * @param {object} api         - Zotero API adapter
- * @returns {Promise<boolean>}  true = skipped, false = note created
+ * Compares a fingerprint embedded in the existing note (if any) against a
+ * freshly-computed fingerprint of the current parsed book. If nothing has
+ * changed, the note is left alone. If the clippings have changed (or no note
+ * exists yet), the old note is replaced (or a new one created).
+ *
+ * Also cleans up any legacy "kindle-import" tag from pre-tag-removal notes.
+ *
+ * @param {Book}           parsedBook
+ * @param {object}         zoteroItem    - Real Zotero item or mock
+ * @param {object}         api           - Zotero API adapter
+ * @param {number|string}  collectionID  - ID of the "Kindle Imports" collection
+ * @returns {Promise<"added"|"updated"|"skipped">}
  */
-async function attachNoteToExisting(parsedBook, zoteroItem, api) {
+async function attachNoteToExisting(parsedBook, zoteroItem, api, collectionID) {
   const itemID = api.getItemID(zoteroItem);
 
-  // Duplicate guard: check if a Kindle note already exists
-  if (await api.hasKindleNote(itemID)) {
-    return true; // skip
+  // Always ensure the item appears in "Kindle Imports", regardless of note state
+  if (collectionID) {
+    await api.addToCollection(itemID, collectionID);
   }
 
+  const existingNote = await api.getKindleNote(itemID);
+
+  if (!existingNote) {
+    // No previous Kindle note — create one fresh (no tag)
+    const html = buildNoteHTML(parsedBook);
+    await api.createNote(itemID, html);
+    return "added";
+  }
+
+  // Compare fingerprints to decide whether anything has changed
+  const currentFP = computeFingerprint(parsedBook);
+  const storedFP  = parseNoteFingerprint(existingNote.html);
+
+  if (storedFP && storedFP.hash === currentFP.hash) {
+    return "skipped"; // no new highlights
+  }
+
+  // Fingerprints differ (or note predates fingerprinting) — replace with fresh note
+  await api.deleteNote(existingNote.id);
   const html = buildNoteHTML(parsedBook);
-  await api.createNote(itemID, html, [KINDLE_NOTE_TAG]);
-  return false;
+  await api.createNote(itemID, html);
+  return "updated";
 }
 
 /**
@@ -135,7 +170,7 @@ async function createBookAndNote(parsedBook, metadata, collectionID, api) {
   });
 
   const html = buildNoteHTML(parsedBook);
-  await api.createNote(itemID, html, [KINDLE_NOTE_TAG]);
+  await api.createNote(itemID, html); // no tag
 }
 
 /**
@@ -144,8 +179,9 @@ async function createBookAndNote(parsedBook, metadata, collectionID, api) {
 function summarizeImportReport(report) {
   const lines = [
     `✅ Notes added:    ${report.notesAdded}`,
+    `🔄 Notes updated:  ${report.notesUpdated}`,
     `📗 Books created:  ${report.booksCreated}`,
-    `⏭  Already done:   ${report.skipped} (had existing Kindle note)`,
+    `⏭  Already done:   ${report.skipped} (no new highlights)`,
   ];
   if (report.failed.length > 0) {
     lines.push(`❌ Failed:         ${report.failed.length}`);
@@ -162,24 +198,30 @@ function summarizeImportReport(report) {
  * Build the HTML content for a Kindle highlights note.
  *
  * Format:
+ *   <!-- kindle-import-meta: {...} -->   ← machine-readable fingerprint
  *   <h1>Kindle Notes</h1>
  *   <p><strong>Book Title</strong></p>
  *   <p><em>Imported on DATE — N highlights, M notes</em></p>
  *   --- for each highlight ---
  *   <blockquote>Highlight text</blockquote>
- *   <p class="location">📍 Page 23 · Location 342–344 · Jan 5, 2025</p>
+ *   <p><small>📍 Page 23 · Location 342–344 · Jan 5, 2025</small></p>
  *   --- for each note ---
- *   <p class="kindle-note"><strong>Note:</strong> your note text</p>
- *   <p class="location">📍 Page 23 · Jan 5, 2025</p>
+ *   <p><strong>📝 Note:</strong> your note text</p>
+ *   <p><small>📍 Page 23 · Jan 5, 2025</small></p>
  */
 function buildNoteHTML(parsedBook) {
   const { title, highlights, notes } = parsedBook;
-  const totalClips = highlights.length + notes.length;
   const importDate = new Date().toLocaleDateString("en-US", {
     year: "numeric", month: "long", day: "numeric",
   });
 
+  // Embed a machine-readable fingerprint so future imports can detect changes
+  // and re-identify this note without relying on tags.
+  const fp = computeFingerprint(parsedBook);
+  const metaComment = `<!-- kindle-import-meta: ${JSON.stringify(fp)} -->`;
+
   const lines = [
+    metaComment,
     `<h1>Kindle Notes</h1>`,
     `<p><strong>${escapeHTML(title)}</strong></p>`,
     `<p><em>Imported on ${importDate} — ` +
@@ -206,6 +248,64 @@ function buildNoteHTML(parsedBook) {
   return lines.join("\n");
 }
 
+// ─── Fingerprint Helpers ──────────────────────────────────────────────────────
+
+/**
+ * Compute a fingerprint for a parsed book's current set of clips.
+ * Uses a djb2 hash over the sorted location:text pairs so that any change —
+ * addition, removal, or edit — produces a different hash.
+ *
+ * @param {Book} parsedBook
+ * @returns {{ count: number, hash: string, kindleKey: string }}
+ */
+function computeFingerprint(parsedBook) {
+  const allClips = [...parsedBook.highlights, ...parsedBook.notes]
+    .sort((a, b) => (a.locationStart ?? a.page ?? 0) - (b.locationStart ?? b.page ?? 0));
+
+  const count = allClips.length;
+  const hashInput = allClips
+    .map(c => `${c.locationStart ?? c.page ?? 0}:${c.text}`)
+    .join("|");
+
+  // kindleKey is the stable identifier used to re-find this book's note on future
+  // imports — same format as makeBookKey() in parser.js so it matches the Map key.
+  const kindleKey =
+    parsedBook.title.toLowerCase().replace(/\s+/g, " ").trim() +
+    "::" +
+    parsedBook.authors.map(a => a.toLowerCase()).sort().join(",");
+
+  return { count, hash: djb2Hash(hashInput), kindleKey };
+}
+
+/**
+ * Parse the fingerprint stored in an existing note's HTML.
+ * Returns null if the comment is absent or malformed (e.g. pre-fingerprint notes).
+ *
+ * @param {string} html
+ * @returns {{ count: number, hash: string, kindleKey: string }|null}
+ */
+function parseNoteFingerprint(html) {
+  const match = html.match(FINGERPRINT_COMMENT_RE);
+  if (!match) return null;
+  try { return JSON.parse(match[1]); } catch { return null; }
+}
+
+/**
+ * djb2 hash — fast, dependency-free, consistent across JS engines.
+ * Returns an unsigned 32-bit value as a hex string.
+ *
+ * @param {string} str
+ * @returns {string}
+ */
+function djb2Hash(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) {
+    h = ((h << 5) + h) + str.charCodeAt(i);
+    h = h & h; // keep 32-bit
+  }
+  return (h >>> 0).toString(16);
+}
+
 // ─── Zotero API Adapter ───────────────────────────────────────────────────────
 
 /**
@@ -219,27 +319,58 @@ function buildZoteroAPI() {
       return item.id;
     },
 
-    /** Check if an item already has a Kindle import note attached */
-    async hasKindleNote(itemID) {
+    /**
+     * Return the existing Kindle import note (id + html) if one exists, else null.
+     * Detection strategy (in order):
+     *   1. Note HTML contains the fingerprint comment (current format, no tag)
+     *   2. Note carries the legacy "kindle-import" tag (pre-tag-removal format)
+     */
+    async getKindleNote(itemID) {
       const item = Zotero.Items.get(itemID);
       const noteIDs = item.getNotes();
       for (const noteID of noteIDs) {
         const note = Zotero.Items.get(noteID);
+        const html = note.getNote();
+        // Current: identified by embedded fingerprint comment
+        if (html.includes("kindle-import-meta")) {
+          return { id: note.id, html };
+        }
+        // Legacy: identified by tag (notes created before tag removal)
         const tags = note.getTags().map(t => t.tag);
-        if (tags.includes(KINDLE_NOTE_TAG)) return true;
+        if (tags.includes(LEGACY_KINDLE_TAG)) {
+          return { id: note.id, html };
+        }
       }
-      return false;
+      return null;
     },
 
-    /** Create a child note on an existing item */
-    async createNote(parentItemID, html, tags = []) {
+    /** Delete a note item by ID */
+    async deleteNote(noteID) {
+      const note = Zotero.Items.get(noteID);
+      await note.eraseTx();
+    },
+
+    /** Create a child note on an existing item (no tag) */
+    async createNote(parentItemID, html) {
       const note = new Zotero.Item("note");
       note.libraryID  = Zotero.Libraries.userLibraryID;
       note.parentID   = parentItemID;
       note.setNote(html);
-      for (const tag of tags) note.addTag(tag);
       await note.saveTx();
       return note.id;
+    },
+
+    /**
+     * Add an item to a collection if it isn't already a member.
+     * Safe to call multiple times — no-ops if already in the collection.
+     */
+    async addToCollection(itemID, collectionID) {
+      const item = Zotero.Items.get(itemID);
+      const currentCollections = item.getCollections();
+      if (!currentCollections.includes(collectionID)) {
+        item.addToCollection(collectionID);
+        await item.saveTx();
+      }
     },
 
     /** Create a new book item and return its ID */
@@ -344,8 +475,10 @@ var KindleImporter = {
   createBookAndNote,
   buildNoteHTML,
   summarizeImportReport,
-  KINDLE_NOTE_TAG,
   IMPORT_COLLECTION_NAME,
+  // Exported for testing and use by dialog.js
+  _computeFingerprint:    computeFingerprint,
+  _parseNoteFingerprint:  parseNoteFingerprint,
 };
 
 if (typeof module !== "undefined" && module.exports) {
