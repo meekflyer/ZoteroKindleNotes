@@ -4,6 +4,8 @@ A Zotero 7 plugin that imports your Kindle highlights and notes from `My Clippin
 
 ![Zotero 7](https://img.shields.io/badge/Zotero-7.x-red) ![License](https://img.shields.io/badge/license-MIT-blue)
 
+![Preview](preview.jpg)
+
 ---
 
 ## Features
@@ -15,7 +17,9 @@ A Zotero 7 plugin that imports your Kindle highlights and notes from `My Clippin
 - Lets you manually resolve uncertain matches or mark books as new
 - "Mark all as new books" bulk action for quick processing
 - Adds highlights and notes as child note items in Zotero
-- Looks up new books via Google Books and Open Library APIs to create proper Zotero entries
+- Detects previously imported highlights to avoid duplicates on re-import
+- Looks up new books via Google Books and Open Library APIs to create proper Zotero entries with ISBN, publisher, etc.
+- Organizes imported books into a "Kindle Imports" collection
 
 ---
 
@@ -38,7 +42,7 @@ A Zotero 7 plugin that imports your Kindle highlights and notes from `My Clippin
 
 ## Usage
 
-1. Connect your Kindle and locate `My Clippings.txt` (usually in the `documents/` folder on the Kindle drive)
+1. Connect your Kindle via USB and locate `My Clippings.txt` (usually in the `documents/` folder on the Kindle drive)
 2. In Zotero, go to **Tools → Import Kindle Highlights**
 3. Follow the 5-step wizard:
    - **Load File** — select your `My Clippings.txt`
@@ -47,12 +51,14 @@ A Zotero 7 plugin that imports your Kindle highlights and notes from `My Clippin
    - **Import** — highlights are added as notes to each book
    - **Done** — summary of what was imported
 
+You can safely re-run the import at any time — previously imported highlights are detected and skipped.
+
 ---
 
 ## How It Works
 
 ### Parsing
-`src/parser.js` reads `My Clippings.txt` and groups highlights and notes by book. It handles the quirky Kindle format — entries separated by `==========`, with metadata lines like `- Your Highlight on page 12 | location 150-155 | Added on Monday, January 1, 2024`.
+`src/parser.js` reads `My Clippings.txt` and groups highlights and notes by book. It handles the Kindle clippings format — entries separated by `==========`, with metadata lines like `- Your Highlight on page 12 | location 150-155 | Added on Monday, January 1, 2024`.
 
 ### Matching
 `src/matcher.js` compares each Kindle book title and author against every item in your Zotero library using a combination of:
@@ -63,76 +69,57 @@ A Zotero 7 plugin that imports your Kindle highlights and notes from `My Clippin
 Short titles (3 words or fewer) require a stricter threshold since they're more likely to false-match.
 
 ### Book Lookup
-`src/bookLookup.js` fetches metadata for books not in your Zotero library so they can be created as proper Zotero items with ISBN, publisher, etc. It tries three sources in order: [Google Books API](https://developers.google.com/books) (title + author), Google Books (title only), then [Open Library API](https://openlibrary.org/developers/api) as a fallback. If all three fail, it creates a minimal record from whatever Kindle data is available.
+`src/bookLookup.js` fetches metadata for books not in your Zotero library so they can be created as proper Zotero items. It tries three sources in order: [Google Books API](https://developers.google.com/books) (title + author), Google Books (title only), then [Open Library API](https://openlibrary.org/developers/api) as a fallback. No API keys are required. If all three fail, it creates a minimal record from whatever Kindle data is available.
 
 ### Importing
-`src/importer.js` creates Zotero note items as children of each matched book, formatted with the highlight text, location, and date.
+`src/importer.js` creates Zotero note items as children of each matched book, formatted with highlight text, location, and date. It uses fingerprinting to detect previously imported notes, so re-running the import won't create duplicates.
 
 ---
 
 ## Development
 
-No build step required. The plugin is a plain XPI (zip file) of the source files.
+No build step or external dependencies required. The plugin is plain JavaScript packaged as an XPI (zip) file.
+
+### Project Structure
 
 ```
-kindle-zotero-plugin/
-├── manifest.json          # WebExtension-style plugin metadata
-├── bootstrap.js           # Zotero 7 lifecycle hooks (startup/shutdown)
+ZoteroKindleNotes/
+├── manifest.json          # Zotero 7 plugin metadata
+├── bootstrap.js           # Plugin lifecycle hooks (startup/shutdown)
 ├── chrome/
 │   └── content/
-│       ├── dialog.xhtml   # Plugin UI (5-screen wizard)
-│       └── dialog.js      # UI logic
+│       ├── dialog.xhtml   # 5-screen wizard UI
+│       └── dialog.js      # UI logic and state management
 ├── src/
 │   ├── parser.js          # My Clippings.txt parser
 │   ├── matcher.js         # Fuzzy book matching against Zotero library
-│   ├── bookLookup.js      # Google Books + Open Library API integration
-│   └── importer.js        # Zotero note creation
-├── *.test.js              # Node.js test files (run with: node matcher.test.js)
-└── kindle-importer.xpi    # Built plugin (zip of the above)
+│   ├── bookLookup.js      # Google Books + Open Library API lookups
+│   └── importer.js        # Zotero item and note creation
+└── kindle-importer.xpi    # Built plugin
 ```
 
-To build the XPI yourself:
+### Building the XPI
+
 ```bash
-zip -r kindle-importer.xpi manifest.json bootstrap.js src/ chrome/ --exclude "*.test.js"
+zip -r kindle-importer.xpi manifest.json bootstrap.js src/ chrome/
 ```
-
-To run the tests (requires Node.js):
-```bash
-node matcher.test.js
-node parser.test.js
-```
-
----
-
-## Built With Claude
-
-This plugin was built entirely through a conversation with **Claude Sonnet 4.6** (Anthropic) using the [Claude in Chrome](https://claude.ai) browser extension, which gave Claude the ability to read screenshots of Zotero as the plugin was being debugged in real time.
-
-The development process was iterative and conversational — describing what was broken, sharing screenshots, and letting Claude write, debug, and refine the code across many turns. No separate IDE or build environment was used; Claude wrote directly to files in a container and packaged each iteration as an installable `.xpi`.
-
-Notable challenges solved along the way:
-- Zotero 7's breaking changes from v6 (no `chrome.manifest`, new `aomStartup` API)
-- XUL dialog context scoping (`Zotero` global not available in child windows)
-- XUL's non-standard flex/scroll behavior requiring fixed pixel heights
-- Native radio inputs scoping globally in XUL, requiring custom selection logic
-- Dark mode compatibility (Zotero's UI is dark; the plugin was initially designed with hardcoded light colors)
-- Fuzzy title matching — bigrams hurt more than they helped; plain word tokens with a containment score worked better
 
 ---
 
 ## Known Limitations
 
-- Very short book titles (1–2 words) may still occasionally false-match; use the Review screen to correct these
-- Book metadata fetched from external APIs occasionally returns incomplete data (missing ISBN, publisher, etc.) — the import will still succeed with whatever fields are available
+- Very short book titles (1-2 words) may occasionally false-match — use the Review screen to correct these
+- Book metadata from external APIs may sometimes be incomplete (missing ISBN, publisher, etc.) — the import will still succeed with whatever fields are available
+- Only reads Kindle's `My Clippings.txt` format; other highlight export formats are not yet supported
 
 ---
 
 ## License
 
-MIT — do whatever you like with it.
+[MIT](LICENSE)
 
 ---
 
 ## Contributing
 
-Issues and PRs welcome. This is a first release and there's plenty of room to improve the matching logic, add duplicate detection, and support other highlight export formats.
+Issues and PRs welcome. There's room to improve the matching logic, add support for other highlight export formats, and more.
